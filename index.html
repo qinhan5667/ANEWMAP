@@ -528,16 +528,15 @@
 
       // "https://crop.siwei.world/v2?service=WMS&version=1.1.0&request=GetMap&layers=huarun%3A%E5%8E%BF%E7%BA%A7%E8%A1%8C%E6%94%BF%E5%8C%BA%E5%88%92&bbox=73.50114210012788%2C3.837901789735838%2C135.08851148002088%2C53.56090105044319&width=768&height=620&srs=EPSG%3A4326&styles=&format=image/png",
       // 全国行政区划
-      const siweiBoundaryLayer = L.tileLayer.wms(
-        "https://crop.siwei.world/v2?",
-        {
+      const siweiBoundaryLayer = L.tileLayer
+        .wms("https://crop.siwei.world/v2?", {
           layers: "huarun:县级行政区划",
           format: "image/png",
           transparent: true,
           crs: L.CRS.EPSG4326,
           attribution: "© SiweiCrop contributors",
-        }
-      ).addTo(map);
+        })
+        .addTo(map);
 
       // 县级行政区划
       const siweiXianBoundaryLayer = L.tileLayer.wms(
@@ -584,6 +583,28 @@
           padding: [100, 100],
         });
       }
+      let testlayer;
+      Promise.all([
+        fetch("data/123.shp").then((r) => r.arrayBuffer()),
+        fetch("data/123.dbf").then((r) => (r.ok ? r.arrayBuffer() : null)),
+      ])
+        .then(([shpBuffer, dbfBuffer]) => shp.parseShp(shpBuffer, dbfBuffer))
+        .then((geojsonData) => {
+          testlayer = L.geoJSON(geojsonData, {
+            style: function (feature) {
+              return {
+                color: feature.properties.color || "blue",
+                weight: 2,
+                fillColor: feature.properties.fillColor || "red",
+                fillOpacity: 0.5,
+              };
+            },
+          }).addTo(map);
+          map.fitBounds(testlayer.getBounds());
+        })
+        .catch((err) => {
+          console.error("加载data/123.shp失败", err);
+        });
 
       // 图层控制
       let baseLayers = {
@@ -592,10 +613,11 @@
       };
       let overlayLayers = {
         腾讯地图: tencentLayer,
-        全国行政区划: siweiBoundaryLayer,
-        县级行政区划: siweiXianBoundaryLayer,
-        市级行政区划: siweiShiBoundaryLayer,
-        省级行政区划: siweiProvinceBoundaryLayer,
+        测试图层: testlayer,
+        // 全国行政区划: siweiBoundaryLayer,
+        // 县级行政区划: siweiXianBoundaryLayer,
+        // 市级行政区划: siweiShiBoundaryLayer,
+        // 省级行政区划: siweiProvinceBoundaryLayer,
       };
 
       let layerControl = L.control
