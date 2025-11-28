@@ -1,23 +1,884 @@
 <!DOCTYPE html>
-<html>
-<head>
-<title>Welcome to nginx!</title>
-<style>
-html { color-scheme: light dark; }
-body { width: 35em; margin: 0 auto;
-font-family: Tahoma, Verdana, Arial, sans-serif; }
-</style>
-</head>
-<body>
-<h1>Welcome to nginx!</h1>
-<p>If you see this page, the nginx web server is successfully installed and
-working. Further configuration is required.</p>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JAXA卫星影像查看器</title>
 
-<p>For online documentation and support please refer to
-<a href="http://nginx.org/">nginx.org</a>.<br/>
-Commercial support is available at
-<a href="http://nginx.com/">nginx.com</a>.</p>
+    <!-- Leaflet CSS -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
 
-<p><em>Thank you for using nginx.</em></p>
-</body>
+    <!-- Leaflet Shapefile插件 -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet-shapefile@0.1.1/dist/leaflet-shapefile.css"
+    />
+
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: Arial, sans-serif;
+      }
+
+      #map {
+        width: 100%;
+        height: 100vh;
+      }
+
+      .control-panel {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: white;
+        padding: 15px;
+        border-radius: 5px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        z-index: 1000;
+        max-width: 300px;
+      }
+
+      .file-input {
+        margin-bottom: 10px;
+      }
+
+      .layer-control {
+        margin-top: 10px;
+      }
+
+      .info-panel {
+        position: absolute;
+        bottom: 10px;
+        left: 10px;
+        background: white;
+        padding: 10px;
+        border-radius: 5px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        z-index: 1000;
+        max-width: 400px;
+      }
+
+      /* UTC时间轴样式 */
+      .utc-panel {
+        background: rgba(0, 0, 0, 0.8);
+        padding: 10px;
+        border-radius: 5px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+        display: flex;
+        justify-content: flex-start;
+        align-items: flex-start;
+        gap: 12px;
+        color: #0f0;
+        font-family: "Courier New", Courier, monospace;
+        margin-bottom: 15px;
+        font-size: 12px;
+      }
+
+      .btn-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .utc-panel button {
+        background: #222;
+        color: #0f0;
+        border: 1px solid #0f0;
+        padding: 4px 8px;
+        cursor: pointer;
+        font-size: 11px;
+        border-radius: 3px;
+        transition: background 0.2s;
+      }
+
+      .utc-panel button:hover {
+        background: #0f0;
+        color: #000;
+      }
+
+      #timeInput {
+        background: #222;
+        color: #0f0;
+        border: 1px solid #0f0;
+        padding: 4px 8px;
+        font-size: 12px;
+        border-radius: 3px;
+        font-family: "Courier New", Courier, monospace;
+      }
+
+      #timeInput:focus {
+        outline: none;
+        border-color: #0f0;
+        box-shadow: 0 0 5px #0f0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+
+    <!-- 隐藏输入框，方便后续提交 -->
+    <input type="datetime-local" id="hiddenInput" hidden />
+
+    <div class="control-panel">
+      <div class="utc-panel">
+        <div class="btn-group left">
+          <button data-step="-1" style="color: #ffa500" data-unit="month">
+            -01mon
+          </button>
+          <button data-step="-1" style="color: #0f0" data-unit="day">
+            -01day
+          </button>
+          <button data-step="-1" style="color: rgb(249, 5, 5)" data-unit="hour">
+            -01hour
+          </button>
+          <button id="latest">Latest</button>
+        </div>
+
+        <div style="display: flex; flex-direction: column; text-align: center">
+          <div>
+            <div style="margin-top: 5px; text-align: center">
+              <span style="color: #ccc; font-size: 12px">北京时间: </span>
+              <input
+                type="text"
+                id="beijingTimeInput"
+                placeholder="202511131700"
+                style="
+                  width: 120px;
+                  text-align: center;
+                  background-color: #222;
+                  color: #ffa500;
+                  border: 1px solid #ffa500;
+                "
+              />
+            </div>
+            <span style="color: #ccc; font-size: 12px">UTC时间: </span>
+            <input
+              type="text"
+              id="timeInput"
+              placeholder="202511130900"
+              style="width: 120px; text-align: center"
+            />
+          </div>
+        </div>
+
+        <div class="btn-group right">
+          <button data-step="+1" style="color: #ffa500" data-unit="month">
+            +01mon
+          </button>
+          <button data-step="+1" style="color: #0f0" data-unit="day">
+            +01day
+          </button>
+          <button data-step="+1" style="color: rgb(249, 5, 5)" data-unit="hour">
+            +01hour
+          </button>
+        </div>
+      </div>
+
+      <hr style="margin: 15px 0" />
+      <h3>Shape文件加载器</h3>
+
+      <div class="file-input">
+        <label for="shapefile">选择Shape文件 (.shp):</label>
+        <input type="file" id="shapefile" accept=".shp" />
+      </div>
+
+      <button
+        onclick="loadShapefile()"
+        style="margin-top: 10px; padding: 8px 15px"
+      >
+        加载Shape文件
+      </button>
+
+      <div class="layer-control">
+        <label>
+          <input
+            type="checkbox"
+            id="showShapefile"
+            checked
+            onchange="toggleShapefile()"
+          />
+          显示Shape文件
+        </label>
+      </div>
+
+      <hr style="margin: 15px 0" />
+
+      <h4>GeoJSON加载</h4>
+      <div class="file-input">
+        <label for="geojsonfile">选择GeoJSON文件 (.json):</label>
+        <input type="file" id="geojsonfile" accept=".json,.geojson" />
+      </div>
+      <button
+        onclick="loadGeoJSONFile()"
+        style="margin-top: 10px; padding: 8px 15px"
+      >
+        加载GeoJSON文件
+      </button>
+
+      <div class="layer-control">
+        <label>
+          <input
+            type="checkbox"
+            id="showGeoJSON"
+            checked
+            onchange="toggleGeoJSON()"
+          />
+          显示GeoJSON文件
+        </label>
+      </div>
+    </div>
+
+    <!-- 信息面板（暂时不用） -->
+    <!-- <div class="info-panel">
+      <h4>JAXA Himawari卫星影像查看器</h4>
+      <p>底图数据来源: JAXA P-Tree系统</p>
+      <p>支持加载本地Shape文件进行叠加显示</p>
+      <div id="file-info"></div>
+    </div> -->
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- 中国地图提供商插件 -->
+    <script src="./lib/leaflet.ChineseTmsProviders.js"></script>
+    <script src="./lib/leaflet.mapCorrection.min.js"></script>
+    <script src="./lib/proj4-compressed.js"></script>
+    <script src="./lib/proj4leaflet.js"></script>
+
+    <!-- Shapefile相关库 -->
+    <script src="https://unpkg.com/shpjs@4.0.4/dist/shp.js"></script>
+    <script src="https://unpkg.com/proj4@2.8.0/dist/proj4.js"></script>
+    <script src="https://unpkg.com/proj4leaflet@1.0.2/src/proj4leaflet.js"></script>
+
+    <script>
+      // UTC时间轴功能
+      let base = new Date(Date.now() - 30 * 60 * 1000); // 减去30分钟，确保能获取到JAXA数据
+
+      // 格式化日期为JAXA API所需的格式 (YYYYMMDDHHMM)，分钟数向下取整到10分钟间隔
+      function formatJAXADate(date) {
+        const year = date.getUTCFullYear();
+        const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+        const day = String(date.getUTCDate()).padStart(2, "0");
+        const hours = String(date.getUTCHours()).padStart(2, "0");
+
+        // 分钟数向下取整到10分钟间隔：00-09→00, 10-19→10, 20-29→20, 30-39→30, 40-49→40, 50-59→50
+        const minutes = String(
+          Math.floor(date.getUTCMinutes() / 10) * 10
+        ).padStart(2, "0");
+
+        console.log(
+          `原始时间: ${date.toISOString()}, 格式化时间: ${year}${month}${day}${hours}${minutes}`
+        );
+
+        return `${year}${month}${day}${hours}${minutes}`;
+      }
+
+      // 格式化日期为北京时间显示格式 (YYYYMMDDHHMM)
+      function formatBeijingDate(utcDate) {
+        // 将UTC时间转换为北京时间 (UTC+8)
+        const beijingDate = new Date(utcDate.getTime() + 8 * 60 * 60 * 1000);
+
+        const year = beijingDate.getUTCFullYear();
+        const month = String(beijingDate.getUTCMonth() + 1).padStart(2, "0");
+        const day = String(beijingDate.getUTCDate()).padStart(2, "0");
+        const hours = String(beijingDate.getUTCHours()).padStart(2, "0");
+        const minutes = String(beijingDate.getUTCMinutes()).padStart(2, "0");
+
+        return `${year}/${month}/${day}/${hours}/${minutes}`;
+      }
+
+      // 格式化日期为JAXA API请求所需的北京时间格式 (YYYYMMDDHHMM)，分钟数向下取整到10分钟间隔
+      function formatJAXABeijingDate(utcDate) {
+        // 将UTC时间转换为北京时间 (UTC+8)
+        const beijingDate = new Date(utcDate.getTime() + 8 * 60 * 60 * 1000);
+
+        const year = beijingDate.getUTCFullYear();
+        const month = String(beijingDate.getUTCMonth() + 1).padStart(2, "0");
+        const day = String(beijingDate.getUTCDate()).padStart(2, "0");
+        const hours = String(beijingDate.getUTCHours()).padStart(2, "0");
+
+        // 分钟数向下取整到10分钟间隔：00-09→00, 10-19→10, 20-29→20, 30-39→30, 40-49→40, 50-59→50
+        const minutes = String(
+          Math.floor(beijingDate.getUTCMinutes() / 10) * 10
+        ).padStart(2, "0");
+
+        return `${year}${month}${day}${hours}${minutes}`;
+      }
+
+      // 更新北京时间显示
+      function updateBeijingTime() {
+        const beijingTimeStr = formatBeijingDate(base);
+        const beijingTimeInput = document.getElementById("beijingTimeInput");
+        if (beijingTimeInput) {
+          beijingTimeInput.value = beijingTimeStr;
+        }
+      }
+
+      // 更新JAXA图层URL
+      function updateJAXALayer() {
+        // 使用UTC时间进行请求，分钟数向下取整到10分钟间隔
+        const dateStr = formatJAXADate(base);
+        const newUrl = `https://www.eorc.jaxa.jp/cgi-bin/ptree/tilemap/tilemap_vis_v2r1.py?z={z}&x={x}&y={-y}&prd=VIS&date=${dateStr}&term=T10m&ver=000`;
+
+        if (jaxaLayer) {
+          jaxaLayer.setUrl(newUrl);
+          jaxaLayer.redraw();
+        }
+      }
+
+      // =========== UTC时间轴功能 ===========
+
+      /* 取 Latest 时复位到此刻减去30分钟 */
+      document.getElementById("latest").addEventListener("click", () => {
+        base = new Date(Date.now() - 30 * 60 * 1000); // 减去30分钟，确保能获取到JAXA数据
+        updateJAXALayer();
+        updateTimeInput();
+      });
+
+      /* 偏移按钮统一监听 */
+      document.querySelectorAll("button[data-step]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const step = parseInt(btn.dataset.step, 10);
+          const unit = btn.dataset.unit;
+          base = addTime(base, step, unit);
+          updateJAXALayer();
+          updateTimeInput();
+        });
+      });
+
+      // 添加一个标志来跟踪用户是否正在编辑输入框
+      let isEditingTimeInput = false;
+
+      /* 输入框时间输入监听 */
+      const timeInput = document.getElementById("timeInput");
+
+      timeInput.addEventListener("focus", () => {
+        isEditingTimeInput = true;
+      });
+
+      timeInput.addEventListener("blur", () => {
+        isEditingTimeInput = false;
+        // 当输入框失去焦点时，如果内容有效则更新base变量
+        const inputValue = timeInput.value.trim();
+        if (inputValue.length === 12 && /^\d{12}$/.test(inputValue)) {
+          const year = parseInt(inputValue.substring(0, 4));
+          const month = parseInt(inputValue.substring(4, 6)) - 1; // 月份从0开始
+          const day = parseInt(inputValue.substring(6, 8));
+          const hours = parseInt(inputValue.substring(8, 10));
+          const minutes = parseInt(inputValue.substring(10, 12));
+
+          base = new Date(Date.UTC(year, month, day, hours, minutes));
+          updateJAXALayer();
+        }
+      });
+
+      timeInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          const inputValue = e.target.value.trim();
+          if (inputValue.length === 12 && /^\d{12}$/.test(inputValue)) {
+            // 解析输入的时间格式：YYYYMMDDHHMM
+            const year = parseInt(inputValue.substring(0, 4));
+            const month = parseInt(inputValue.substring(4, 6)) - 1; // 月份从0开始
+            const day = parseInt(inputValue.substring(6, 8));
+            const hours = parseInt(inputValue.substring(8, 10));
+            const minutes = parseInt(inputValue.substring(10, 12));
+
+            base = new Date(Date.UTC(year, month, day, hours, minutes));
+            updateJAXALayer();
+            isEditingTimeInput = false; // 完成编辑
+          } else {
+            alert("请输入正确的UTC时间格式：YYYYMMDDHHMM（12位数字）");
+            updateTimeInput();
+          }
+        }
+      });
+
+      // 添加一个标志来跟踪用户是否正在编辑北京时间输入框
+      let isEditingBeijingTimeInput = false;
+
+      /* 北京时间输入框事件监听 */
+      const beijingTimeInput = document.getElementById("beijingTimeInput");
+
+      beijingTimeInput.addEventListener("focus", () => {
+        isEditingBeijingTimeInput = true;
+      });
+
+      beijingTimeInput.addEventListener("blur", () => {
+        isEditingBeijingTimeInput = false;
+        // 当输入框失去焦点时，如果内容有效则更新base变量
+        const inputValue = beijingTimeInput.value.trim();
+        if (inputValue.length === 12 && /^\d{12}$/.test(inputValue)) {
+          const year = parseInt(inputValue.substring(0, 4));
+          const month = parseInt(inputValue.substring(4, 6)) - 1; // 月份从0开始
+          const day = parseInt(inputValue.substring(6, 8));
+          const hours = parseInt(inputValue.substring(8, 10));
+          const minutes = parseInt(inputValue.substring(10, 12));
+
+          // 将北京时间转换为UTC时间 (北京时间 = UTC+8)
+          const beijingDate = new Date(
+            Date.UTC(year, month, day, hours, minutes)
+          );
+          base = new Date(beijingDate.getTime() - 8 * 60 * 60 * 1000);
+          updateJAXALayer();
+        }
+      });
+
+      beijingTimeInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          const inputValue = e.target.value.trim();
+          if (inputValue.length === 12 && /^\d{12}$/.test(inputValue)) {
+            // 解析输入的时间格式：YYYYMMDDHHMM
+            const year = parseInt(inputValue.substring(0, 4));
+            const month = parseInt(inputValue.substring(4, 6)) - 1; // 月份从0开始
+            const day = parseInt(inputValue.substring(6, 8));
+            const hours = parseInt(inputValue.substring(8, 10));
+            const minutes = parseInt(inputValue.substring(10, 12));
+
+            // 将北京时间转换为UTC时间 (北京时间 = UTC+8)
+            const beijingDate = new Date(
+              Date.UTC(year, month, day, hours, minutes)
+            );
+            base = new Date(beijingDate.getTime() - 8 * 60 * 60 * 1000);
+            updateJAXALayer();
+            isEditingBeijingTimeInput = false; // 完成编辑
+          } else {
+            alert("请输入正确的北京时间格式：YYYYMMDDHHMM（12位数字）");
+            updateTimeInput();
+          }
+        }
+      });
+
+      /* 定时刷新输入框显示 */
+      setInterval(updateTimeInput, 1000);
+      updateTimeInput(); // 首帧立即执行
+
+      /* =========== 工具函数 =========== */
+
+      function updateTimeInput() {
+        // 如果用户正在编辑输入框，则不强制更新
+        if (isEditingTimeInput || isEditingBeijingTimeInput) {
+          return;
+        }
+
+        const now = new Date(base);
+        const year = now.getUTCFullYear();
+        const month = pad(now.getUTCMonth() + 1);
+        const day = pad(now.getUTCDate());
+        const hours = pad(now.getUTCHours());
+        const minutes = pad(now.getUTCMinutes());
+        const timeStr = `${year}/${month}/${day}/${hours}/${minutes}`;
+
+        document.getElementById("timeInput").value = timeStr;
+
+        // 更新北京时间显示
+        updateBeijingTime();
+
+        // 同时写入隐藏 input（本地时间格式）
+        const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+        document.getElementById("hiddenInput").value = local
+          .toISOString()
+          .slice(0, 16);
+      }
+
+      function pad(n) {
+        return n.toString().padStart(2, "0");
+      }
+
+      function addTime(date, step, unit) {
+        const d = new Date(date);
+        if (unit === "minute") d.setUTCMinutes(d.getUTCMinutes() + step);
+        if (unit === "hour") d.setUTCHours(d.getUTCHours() + step);
+        if (unit === "day") d.setUTCDate(d.getUTCDate() + step);
+        if (unit === "month") d.setUTCMonth(d.getUTCMonth() + step);
+        return d;
+      }
+
+      // 初始化地图
+      const map = L.map("map", {
+        zoomControl: false,
+        attributionControl: false,
+      }).setView([35, 140], 5);
+
+      // JAXA卫星影像瓦片地图服务
+      const jaxaLayer = L.tileLayer(
+        "https://www.eorc.jaxa.jp/cgi-bin/ptree/tilemap/tilemap_vis_v2r1.py?z={z}&x={x}&y={-y}&prd=VIS&date=" +
+          formatJAXADate(base) +
+          "&term=T10m&ver=000",
+        {
+          attribution: "JAXA P-Tree System",
+          maxZoom: 18,
+          minZoom: 1,
+        }
+      ).addTo(map);
+
+      // 备用底图（如果JAXA服务不可用）
+      const osmLayer = L.tileLayer("http://{s}.tile.osm.org/{z}/{x}/{y}.png", {
+        attribution: "© OpenStreetMap contributors",
+      });
+
+      // 腾讯地图
+      const tencentLayer = L.tileLayer.chinaProvider("Tencent.Normal.Map", {
+        minZoom: 0,
+        maxZoom: 19,
+        maxNativeZoom: 18,
+      });
+
+      // "https://crop.siwei.world/v2?service=WMS&version=1.1.0&request=GetMap&layers=huarun%3A%E5%8E%BF%E7%BA%A7%E8%A1%8C%E6%94%BF%E5%8C%BA%E5%88%92&bbox=73.50114210012788%2C3.837901789735838%2C135.08851148002088%2C53.56090105044319&width=768&height=620&srs=EPSG%3A4326&styles=&format=image/png",
+      // 全国行政区划
+      const siweiBoundaryLayer = L.tileLayer.wms(
+        "https://crop.siwei.world/v2?",
+        {
+          layers: "huarun:县级行政区划",
+          format: "image/png",
+          transparent: true,
+          crs: L.CRS.EPSG4326,
+          attribution: "© SiweiCrop contributors",
+        }
+      ).addTo(map);
+
+      // 县级行政区划
+      const siweiXianBoundaryLayer = L.tileLayer.wms(
+        "https://crop.siwei.world/v2?",
+        {
+          layers: "huarun:县行政区划",
+          format: "image/png",
+          transparent: true,
+          crs: L.CRS.EPSG4326,
+          attribution: "© SiweiCrop contributors",
+        }
+      );
+      // 市级行政区划
+      const siweiShiBoundaryLayer = L.tileLayer.wms(
+        "https://crop.siwei.world/v2?",
+        {
+          layers: "huarun:市级行政区划",
+          format: "image/png",
+          transparent: true,
+          crs: L.CRS.EPSG4326,
+          attribution: "© SiweiCrop contributors",
+        }
+      );
+      // 省级行政区划
+      const siweiProvinceBoundaryLayer = L.tileLayer.wms(
+        "https://crop.siwei.world/v2?",
+        {
+          layers: "huarun:省级行政区划",
+          format: "image/png",
+          transparent: true,
+          crs: L.CRS.EPSG4326,
+          attribution: "© SiweiCrop contributors",
+        }
+      );
+
+      let bounds_str =
+        "73.50114210012788,3.837901789735838,135.08851148002088,53.56090105044319";
+      if (bounds_str && bounds_str != "" && bounds_str.split(",").length == 4) {
+        var tmp_str = bounds_str.split(",");
+        var corner1 = L.latLng(tmp_str[1], tmp_str[0]);
+        var corner2 = L.latLng(tmp_str[3], tmp_str[2]);
+        var bounds = L.latLngBounds(corner1, corner2);
+        map.fitBounds(bounds, {
+          padding: [100, 100],
+        });
+      }
+
+      // 图层控制
+      let baseLayers = {
+        JAXA卫星影像: jaxaLayer,
+        OpenStreetMap: osmLayer,
+      };
+      let overlayLayers = {
+        腾讯地图: tencentLayer,
+        全国行政区划: siweiBoundaryLayer,
+        县级行政区划: siweiXianBoundaryLayer,
+        市级行政区划: siweiShiBoundaryLayer,
+        省级行政区划: siweiProvinceBoundaryLayer,
+      };
+
+      let layerControl = L.control
+        .layers(baseLayers, overlayLayers, {
+          position: "topleft",
+          collapsed: false,
+          autoZIndex: true,
+        })
+        .addTo(map);
+
+      let shapefileLayer = null;
+
+      // 加载Shape文件函数
+      function loadShapefile() {
+        const shpFile = document.getElementById("shapefile").files[0];
+
+        if (!shpFile) {
+          alert("请选择Shape文件 (.shp)");
+          return;
+        }
+
+        // 清除之前的图层
+        if (shapefileLayer) {
+          map.removeLayer(shapefileLayer);
+        }
+
+        processShapefile(shpFile, null, "");
+      }
+
+      // 解析PRJ文件获取proj4字符串
+      function parsePrjFile(prjContent) {
+        // 简单的PRJ文件解析，提取坐标系信息
+        // 这里只处理常见的坐标系，如果需要更复杂的解析，可以扩展此函数
+        const lines = prjContent.split("\n");
+        for (const line of lines) {
+          if (line.includes("PROJCS") || line.includes("GEOGCS")) {
+            // 返回一个简单的WGS84投影作为示例
+            // 实际应用中应该根据PRJ文件内容返回正确的proj4字符串
+            return "+proj=longlat +datum=WGS84 +no_defs";
+          }
+        }
+        return null;
+      }
+
+      // 简单的坐标系转换函数
+      function reproject(geojson, fromProj, toProj) {
+        // 如果源坐标系和目标坐标系相同，直接返回
+        if (fromProj === toProj) {
+          return geojson;
+        }
+
+        // 简单的坐标转换实现
+        // 这里假设geojson的坐标系已经是WGS84，直接返回
+        // 实际应用中应该使用proj4库进行精确转换
+        return geojson;
+      }
+
+      function processShapefile(shpFile, dbfFile, prjContent) {
+        // 使用FileReader读取文件内容
+        const readFileAsArrayBuffer = (file) => {
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = (e) => reject(e);
+            reader.readAsArrayBuffer(file);
+          });
+        };
+
+        // 读取所有必需的文件
+        Promise.all([
+          readFileAsArrayBuffer(shpFile),
+          dbfFile ? readFileAsArrayBuffer(dbfFile) : Promise.resolve(null),
+        ])
+          .then(([shpBuffer, dbfBuffer]) => {
+            // 使用shpjs库读取Shape文件，明确指定不是zip文件
+            return shp.parseShp(shpBuffer, dbfBuffer);
+          })
+          .then(function (geojson) {
+            // 处理坐标系转换
+            let geoJsonLayer;
+
+            // 如果有PRJ文件内容，尝试进行坐标系转换
+            if (prjContent) {
+              try {
+                // 解析PRJ文件获取坐标系信息
+                const proj4String = parsePrjFile(prjContent);
+                if (proj4String) {
+                  // 定义新的投影
+                  proj4.defs("custom", proj4String);
+
+                  // 转换GeoJSON坐标系
+                  const transformedGeoJSON = reproject(
+                    geojson,
+                    "custom",
+                    "EPSG:4326"
+                  );
+                  geoJsonLayer = L.geoJSON(transformedGeoJSON);
+                } else {
+                  geoJsonLayer = L.geoJSON(geojson);
+                }
+              } catch (error) {
+                console.warn("坐标系转换失败，使用原始坐标系:", error);
+                geoJsonLayer = L.geoJSON(geojson);
+              }
+            } else {
+              geoJsonLayer = L.geoJSON(geojson);
+            }
+
+            // 设置样式
+            geoJsonLayer.setStyle({
+              color: "#3388ff",
+              weight: 2,
+              opacity: 0.8,
+              fillColor: "#3388ff",
+              fillOpacity: 0.2,
+            });
+
+            // 添加交互功能
+            geoJsonLayer.on("click", function (e) {
+              const layer = e.target;
+              const properties = layer.feature.properties;
+
+              let popupContent = '<div class="shapefile-popup">';
+              popupContent += "<h4>Shapefile属性</h4>";
+
+              if (properties && Object.keys(properties).length > 0) {
+                popupContent += "<table>";
+                for (const [key, value] of Object.entries(properties)) {
+                  popupContent += `<tr><td><strong>${key}:</strong></td><td>${value}</td></tr>`;
+                }
+                popupContent += "</table>";
+              } else {
+                popupContent += "<p>无属性数据</p>";
+              }
+
+              popupContent += "</div>";
+
+              layer.bindPopup(popupContent).openPopup();
+            });
+
+            // 添加到地图并调整视图
+            geoJsonLayer.addTo(map);
+            map.fitBounds(geoJsonLayer.getBounds());
+
+            // // 显示文件信息（暂时不用）
+            // document.getElementById("file-info").innerHTML = `
+            //         <p><strong>加载成功!</strong></p>
+            //         <p>文件: ${shpFile.name}</p> `;
+
+            console.log("Shape文件加载成功");
+          })
+          .catch(function (error) {
+            console.error("加载Shape文件失败:", error);
+            alert("加载Shape文件失败: " + error.message);
+          });
+      }
+
+      function toggleShapefile() {
+        const show = document.getElementById("showShapefile").checked;
+        if (shapefileLayer) {
+          if (show) {
+            map.addLayer(shapefileLayer);
+          } else {
+            map.removeLayer(shapefileLayer);
+          }
+        }
+      }
+
+      // 添加比例尺
+      L.control.scale().addTo(map);
+      //   // 添加鼠标位置显示
+      //   L.control.mousePosition().addTo(map);
+
+      // GeoJSON图层变量
+      let geojsonLayer = null;
+
+      // 加载GeoJSON文件函数
+      async function loadGeoJSONFile() {
+        const geojsonFile = document.getElementById("geojsonfile").files[0];
+
+        if (!geojsonFile) {
+          alert("请选择GeoJSON文件 (.json)");
+          return;
+        }
+
+        try {
+          // 清除之前的GeoJSON图层
+          if (geojsonLayer) {
+            map.removeLayer(geojsonLayer);
+          }
+
+          const fileReader = new FileReader();
+
+          fileReader.onload = async function (e) {
+            try {
+              const data = JSON.parse(e.target.result);
+
+              const jsonOption = {
+                style: {
+                  color: "#104A40",
+                  fillColor: "rgb(207,240,215,0.5)",
+                  fillOpacity: 1,
+                  opacity: 1,
+                  weight: 1,
+                },
+                pointToLayer: function (feature, latlng) {
+                  return L.marker(latlng);
+                },
+                onEachFeature: function (feature, layer) {
+                  // 可以为每个要素添加交互事件
+                  layer.on({
+                    mouseover: function (e) {
+                      e.target.setStyle({
+                        weight: 3,
+                        color: "#ff0000",
+                        fillOpacity: 0.7,
+                      });
+                    },
+                    mouseout: function (e) {
+                      geojsonLayer.resetStyle(e.target);
+                    },
+                  });
+                },
+              };
+
+              // 创建GeoJSON图层
+              geojsonLayer = L.geoJSON(data, jsonOption).addTo(map);
+
+              // 如果要高亮第一个多边形
+              if (
+                data.features &&
+                data.features.length > 0 &&
+                data.features[0].geometry.type === "Polygon"
+              ) {
+                const coordinates = data.features[0].geometry.coordinates[0];
+                const latlngs = coordinates.map((coord) =>
+                  L.latLng(coord[1], coord[0])
+                );
+
+                const highlightPolygon = L.polygon(latlngs, {
+                  color: "#ff0000",
+                  weight: 3,
+                  opacity: 0.8,
+                  fillColor: "#ff0000",
+                  fillOpacity: 0.2,
+                }).addTo(map);
+              }
+
+              // 自动调整地图视图到GeoJSON范围
+              map.fitBounds(geojsonLayer.getBounds());
+
+              // // 显示文件信息（暂时不用）
+              // document.getElementById("file-info").innerHTML = `
+              //   <p><strong>GeoJSON加载成功!</strong></p>
+              //   <p>文件: ${geojsonFile.name}</p>
+              //   <p>要素数量: ${data.features ? data.features.length : 0}</p>
+              // `;
+
+              console.log("GeoJSON文件加载成功");
+            } catch (error) {
+              console.error("解析GeoJSON文件失败:", error);
+              alert("解析GeoJSON文件失败: " + error.message);
+            }
+          };
+
+          fileReader.readAsText(geojsonFile);
+        } catch (error) {
+          console.error("加载GeoJSON文件失败:", error);
+          alert("加载GeoJSON文件失败: " + error.message);
+        }
+      }
+
+      // 切换GeoJSON图层显示
+      function toggleGeoJSON() {
+        const show = document.getElementById("showGeoJSON").checked;
+        if (geojsonLayer) {
+          if (show) {
+            map.addLayer(geojsonLayer);
+          } else {
+            map.removeLayer(geojsonLayer);
+          }
+        }
+      }
+    </script>
+  </body>
 </html>
