@@ -535,8 +535,7 @@
           transparent: true,
           crs: L.CRS.EPSG4326,
           attribution: "© SiweiCrop contributors",
-        })
-        .addTo(map);
+        });
 
       // 县级行政区划
       const siweiXianBoundaryLayer = L.tileLayer.wms(
@@ -583,12 +582,47 @@
           padding: [100, 100],
         });
       }
+      
       let testlayer;
       Promise.all([
         fetch("data/123.shp").then((r) => r.arrayBuffer()),
         fetch("data/123.dbf").then((r) => (r.ok ? r.arrayBuffer() : null)),
+        fetch("data/123.prj").then((r) => (r.ok ? r.text() : null)),
+        fetch("data/123.cpg").then((r) => (r.ok ? r.text() : null)),
       ])
-        .then(([shpBuffer, dbfBuffer]) => shp.parseShp(shpBuffer, dbfBuffer))
+        .then(([shpBuffer, dbfBuffer, prjString, cpgString]) => {
+          const geometries = shp.parseShp(shpBuffer, prjString);
+          const properties = dbfBuffer
+            ? shp.parseDbf(dbfBuffer, cpgString || undefined)
+            : null;
+
+          if (properties) {
+            // 如果有属性数据，合并几何和属性
+            if (typeof shp.combine === "function") {
+              return shp.combine([geometries, properties]);
+            } else {
+              // 降级处理：手动合并
+              return {
+                type: "FeatureCollection",
+                features: geometries.map((geo, i) => ({
+                  type: "Feature",
+                  geometry: geo,
+                  properties: properties[i],
+                })),
+              };
+            }
+          } else {
+            // 如果没有属性数据，仅返回几何要素
+            return {
+              type: "FeatureCollection",
+              features: geometries.map((geo) => ({
+                type: "Feature",
+                geometry: geo,
+                properties: {},
+              })),
+            };
+          }
+        })
         .then((geojsonData) => {
           testlayer = L.geoJSON(geojsonData, {
             style: function (feature) {
